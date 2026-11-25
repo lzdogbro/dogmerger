@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, ApiError, type Health, type Job, type MediaInfo, type MergePlan } from './api';
+import { api, ApiError, isTauri, type Health, type Job, type MediaInfo, type PlanResponse } from './api';
 
 type SlotKind = 'video' | 'audio';
 
@@ -49,6 +49,20 @@ function baseName(filePath: string): string {
 function dirNameOf(filePath: string): string {
   const idx = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
   return idx > 0 ? filePath.slice(0, idx) : '.';
+}
+
+/**
+ * Tauri reports the OS drag position in physical pixels; map it back to the
+ * column under the cursor so a drop lands in the slot it was aimed at.
+ */
+function slotAtPoint(position: { x: number; y: number }): SlotKind | null {
+  const ratio = window.devicePixelRatio || 1;
+  const element = document.elementFromPoint(position.x / ratio, position.y / ratio);
+  const slot = element?.closest('.slot');
+  if (!slot) return null;
+  if (slot.classList.contains('video')) return 'video';
+  if (slot.classList.contains('audio')) return 'audio';
+  return null;
 }
 
 function describe(info: MediaInfo, kind: SlotKind): string[] {
@@ -158,6 +172,8 @@ interface SlotProps {
   controller: SlotController;
   disabled: boolean;
   pickerReady: boolean;
+  /** True while an OS-level drag hovers this column (Tauri only). */
+  highlighted: boolean;
   onBrowse: () => void;
   onDropFile: (file: File) => void;
 }
@@ -171,7 +187,9 @@ function Slot(props: SlotProps) {
     (props.kind === 'video' ? controller.info.video === null : controller.info.audio === null);
 
   return (
-    <section className={`slot ${props.kind}${dragging ? ' dragging' : ''}`}>
+    <section
+      className={`slot ${props.kind}${dragging || props.highlighted ? ' dragging' : ''}`}
+    >
       <header className="slot-head">
         <h2>{props.title}</h2>
         <span className="slot-accept">{props.accept}</span>
@@ -283,6 +301,12 @@ export default function App() {
   const video = useSlot();
   const audio = useSlot();
 
+  const [dragTarget, setDragTarget] = useState<SlotKind | null>(null);
+  const videoRef = useRef(video);
+  const audioRef = useRef(audio);
+  videoRef.current = video;
+  audioRef.current = audio;
+
   const [outputPath, setOutputPath] = useState('');
   const outputTouched = useRef(false);
   const renameRef = useRef<HTMLInputElement | null>(null);
@@ -290,7 +314,7 @@ export default function App() {
   const [renameError, setRenameError] = useState<string | null>(null);
   const [renaming, setRenaming] = useState(false);
 
-  const [plan, setPlan] = useState<MergePlan | null>(null);
+  const [plan, setPlan] = useState<PlanResponse | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [planLoading, setPlanLoading] = useState(false);
 
@@ -314,6 +338,61 @@ export default function App() {
     return () => {
       window.removeEventListener('dragover', prevent);
       window.removeEventListener('drop', prevent);
+    };
+  }, []);
+
+  /**
+   * Native drag & drop only exists in the Tauri build: the OS hands over the
+   * absolute path, which goes straight to Rust. No copy, no upload, no dialog.
+   */
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    let unlisten: (() => void) | undefined;
+
+    void (async () => {
+      const { getCurrentWebview } = await import('@tauri-apps/api/webview');
+      const stop = await getCurrentWebview().onDragDropEvent((event) => {
+        const payload = event.payload;
+
+        if (payload.type === 'leave') {
+          setDragTarget(null);
+          return;
+        }
+        if (payload.type === 'enter' || payload.type === 'over') {
+          setDragTarget(slotAtPoint(payload.position));
+          return;
+        }
+        if (payload.type !== 'drop') return;
+
+        setDragTarget(null);
+        const dropped = payload.paths[0];
+        if (!dropped) return;
+
+        const target = slotAtPoint(payload.position) ?? 'video';
+        const controller = target === 'video' ? videoRef.current : audioRef.current;
+        if (!isMediaFile(dropped)) {
+          controller.setError('不支持的文件类型，请拖入视频或音频文件。');
+          return;
+        }
+        controller.setPath(dropped);
+      });
+
+      if (disposed) {
+        stop();
+        return;
+      }
+      unlisten = stop;
+      void import('@tauri-apps/api/core')
+        .then(({ invoke }) => invoke('debug_log', { message: 'drag-drop listener ready' }))
+        .catch(() => undefined);
+    })().catch((error) => {
+      setJobError(`原生动拖放不可用：${errorMessage(error)}`);
+    });
+
+    return () => {
+      disposed = true;
+      unlisten?.();
     };
   }, []);
 
@@ -566,6 +645,7 @@ export default function App() {
           controller={video}
           disabled={running}
           pickerReady={pickerReady}
+          highlighted={dragTarget === 'video'}
           onBrowse={() => browse('选择视频文件', (picked) => video.setPath(picked))}
           onDropFile={(file) => handleDrop('video', file)}
         />
@@ -577,6 +657,7 @@ export default function App() {
           controller={audio}
           disabled={running}
           pickerReady={pickerReady}
+          highlighted={dragTarget === 'audio'}
           onBrowse={() => browse('选择音频文件', (picked) => audio.setPath(picked))}
           onDropFile={(file) => handleDrop('audio', file)}
         />

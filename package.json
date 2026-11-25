@@ -6,7 +6,8 @@
   "license": "MIT",
   "workspaces": [
     "server",
-    "web"
+    "web",
+    "desktop"
   ],
   "scripts": {
     "dev": "concurrently -n server,web -c cyan,magenta \"npm run dev:server\" \"npm run dev:web\"",
@@ -14,7 +15,9 @@
     "dev:web": "npm --workspace web run dev",
     "build": "npm --workspace web run build",
     "start": "npm --workspace server run start",
-    "typecheck": "npm --workspace server run typecheck && npm --workspace web run typecheck"
+    "typecheck": "npm --workspace server run typecheck && npm --workspace web run typecheck",
+    "desktop:dev": "npm --workspace desktop run dev",
+    "desktop:build": "npm --workspace desktop run build"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

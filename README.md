@@ -2,6 +2,19 @@
 
 Dogmerger is a lightweight tool that uses FFmpeg to combine sets of video and audio files—which share the same duration—into a single video file with audio. For example, by importing an MP3 file and an MP4 file and clicking "merge," you can create a combined video file named "output.mp4."
 
+## 两种形态
+
+同一套 UI，两个外壳：
+
+| | Web 版 | 桌面版（Tauri） |
+|---|---|---|
+| 浏览器只做界面，ffmpeg 由本地 Express 服务调用 | ✅ | — |
+| ffmpeg 由 Rust 直接调用，无 HTTP 层 | — | ✅ |
+| 拖入文件 | 弹系统选择框确认后填入路径 | **路径直达，零拷贝、无对话框** |
+| 运行方式 | `npm run dev` | `npm run desktop:dev` / 双击 .app |
+
+UI 代码（`web/src`）完全共享，差别只在 `web/src/transport/` 下的两个实现。
+
 ## 设计要点
 
 这个工具的核心是**流复制（stream copy）**，不是转码：
@@ -63,6 +76,44 @@ ffmpeg ──► 直接读本地文件，直接写本地文件
 
 代价是拖入后需要在那一个对话框里再点一次。相比复制 10 GB 文件，这个代价可以忽略。Tauri 桌面版可以去掉这一步 —— `tauri://drag-drop` 直接给路径。
 
+## 桌面版（Tauri）
+
+### 为什么拖入能真正零拷贝
+
+浏览器永远拿不到拖入文件的路径，所以 Web 版只能退而求其次弹选择框。Tauri 不同：系统把拖放的绝对路径直接交给 Rust，`ffmpeg` 就地读取，中间没有任何副本、上传或对话框。
+
+拖放事件是**窗口级**的，所以代码要用坐标做命中测试，判断落在左栏还是右栏：
+
+```rust
+// 前端：物理像素 -> CSS 像素 -> elementFromPoint -> 最近的 .slot
+const element = document.elementFromPoint(x / devicePixelRatio, y / devicePixelRatio);
+const slot = element?.closest('.slot');
+```
+
+### 运行
+
+```bash
+npm install
+npm run desktop:dev      # 启动 Vite + 编译 Rust + 打开窗口
+```
+
+开发模式下窗口加载 Vite 的页面，改前端会热更新；改 Rust 需要重新编译。
+
+### 打包
+
+```bash
+npm run desktop:build
+# 产物: desktop/src-tauri/target/release/bundle/dmg/*.dmg
+#       desktop/src-tauri/target/release/bundle/macos/Dogmerger.app
+```
+
+打包版把前端资源内嵌进可执行文件，不需要 Vite，也不需要 Node。
+
+### 仅桌面版有的行为
+
+- 关闭窗口即退出，并杀掉仍在运行的 ffmpeg 子进程
+- ffmpeg 从 `/opt/homebrew/bin`、`/usr/local/bin` 等常见路径查找 —— GUI 应用拿不到终端的 `PATH`
+
 ## 开发
 
 ```bash
@@ -123,9 +174,19 @@ dogmerger/
 │   ├── jobs.ts       任务注册表、磁盘空间检查、输出命名
 │   ├── picker.ts     跨平台原生文件对话框
 │   └── binaries.ts   ffmpeg 探测
-└── web/src/
-    ├── App.tsx       左右双栏 UI + 拖放
-    └── api.ts        类型化客户端
+├── web/src/
+│   ├── App.tsx       左右双栏 UI + 拖放
+│   ├── api.ts        传输层门面（自动选择 HTTP / Tauri）
+│   ├── types.ts      共享类型契约
+│   └── transport/
+│       ├── http.ts   浏览器：localhost HTTP
+│       └── tauri.ts  桌面：invoke 直连 Rust
+└── desktop/src-tauri/
+    ├── src/lib.rs    Tauri 命令注册
+    ├── src/media.rs  ffprobe 探测
+    ├── src/plan.rs   合并策略（含单元测试）
+    ├── src/jobs.rs   ffmpeg 子进程、进度解析、退出处理
+    └── src/ffmpeg.rs 可执行文件定位
 ```
 
 ## 后续
