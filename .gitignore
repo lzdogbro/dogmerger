@@ -39,3 +39,6 @@ desktop.ini
 # Rust / Tauri
 desktop/src-tauri/target/
 desktop/src-tauri/gen/
+
+# 构建产物
+/dist-artifacts/

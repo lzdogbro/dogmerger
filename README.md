@@ -123,6 +123,14 @@ Tauri 官方只支持在目标系统上构建 —— 从 macOS 交叉编译 Wind
 - 矩阵包含 `macos-latest` 与 `windows-latest`
 - 产物在该次 run 的 **Artifacts** 里下载（`dogmerger-windows-latest`）
 
+Linux 版（`.deb` / `.AppImage`）可在任意 Linux 主机上用 `desktop/docker/linux.Dockerfile` 构建 —— 镜像里装好了 webkit2gtk-4.1 等全部系统依赖，宿主机无 sudo 也能用：
+
+```bash
+docker build --network host -t dogmerger-linux:1 -f desktop/docker/linux.Dockerfile desktop/docker
+docker run --rm -v "$PWD:/src" -w /src --cpus 2 -e CARGO_BUILD_JOBS=2 \
+  dogmerger-linux:1 bash -lc 'npm ci && cd desktop && npx tauri build --bundles deb'
+```
+
 Windows 上运行时需要机器已安装 ffmpeg 并在 `PATH` 中，或设置 `FFMPEG_PATH` / `FFPROBE_PATH` 环境变量 —— 目前没有把 ffmpeg 作为 sidecar 打进安装包。
 
 ### 仅桌面版有的行为
