@@ -37,8 +37,16 @@ fn search_paths(name: &str) -> Option<PathBuf> {
     ] {
         dirs.push(PathBuf::from(fixed));
     }
-    dirs.into_iter()
-        .map(|dir| dir.join(name))
+
+    // Windows executables carry an extension, so a bare "ffmpeg" never matches.
+    let file_names: Vec<String> = if cfg!(windows) {
+        vec![format!("{name}.exe"), name.to_string()]
+    } else {
+        vec![name.to_string()]
+    };
+
+    dirs.iter()
+        .flat_map(|dir| file_names.iter().map(move |file| dir.join(file)))
         .find(|candidate| is_executable(candidate))
 }
 

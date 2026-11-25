@@ -113,6 +113,18 @@ npm run desktop:build
 
 打包版把前端资源内嵌进可执行文件，不需要 Vite，也不需要 Node。
 
+### 平台与 Windows 构建
+
+`bundle.targets` 设为 `"all"`，由宿主系统决定产物：macOS 出 `.app` + `.dmg`，Windows 出 `.msi` + NSIS `.exe`。
+
+Tauri 官方只支持在目标系统上构建 —— 从 macOS 交叉编译 Windows 属于「最后手段」（只能出 NSIS，且测试不充分），MSI 必须在 Windows 上打。所以 Windows 版通过 GitHub Actions 构建（`.github/workflows/build.yml`）：
+
+- push 到 `main`、打 `v*` tag、或手动 `workflow_dispatch` 时触发
+- 矩阵包含 `macos-latest` 与 `windows-latest`
+- 产物在该次 run 的 **Artifacts** 里下载（`dogmerger-windows-latest`）
+
+Windows 上运行时需要机器已安装 ffmpeg 并在 `PATH` 中，或设置 `FFMPEG_PATH` / `FFPROBE_PATH` 环境变量 —— 目前没有把 ffmpeg 作为 sidecar 打进安装包。
+
 ### 仅桌面版有的行为
 
 - 关闭窗口即退出，并杀掉仍在运行的 ffmpeg 子进程
