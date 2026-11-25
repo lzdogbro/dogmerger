@@ -52,12 +52,27 @@ function dirNameOf(filePath: string): string {
 }
 
 /**
- * Tauri reports the OS drag position in physical pixels; map it back to the
- * column under the cursor so a drop lands in the slot it was aimed at.
+ * wry reports the drag position in *window points* on macOS and Linux (AppKit's
+ * `draggingLocation`, GTK widget coords) but in DPI-aware client pixels on
+ * Windows - even though Tauri's JS labels all of them `PhysicalPosition`.
+ * Normalise to CSS pixels before hit-testing, otherwise the point is scaled
+ * twice on Retina and always lands in the left column.
  */
-function slotAtPoint(position: { x: number; y: number }): SlotKind | null {
+function toCssPoint(
+  position: { x: number; y: number },
+  platform: string | null,
+): { x: number; y: number } {
+  const isWindows = platform
+    ? platform === 'windows' || platform === 'win32'
+    : typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent);
+  if (!isWindows) return { x: position.x, y: position.y };
   const ratio = window.devicePixelRatio || 1;
-  const element = document.elementFromPoint(position.x / ratio, position.y / ratio);
+  return { x: position.x / ratio, y: position.y / ratio };
+}
+
+/** Column under a CSS-pixel point, so a drop lands in the slot it was aimed at. */
+function slotAtPoint(point: { x: number; y: number }): SlotKind | null {
+  const element = document.elementFromPoint(point.x, point.y);
   const slot = element?.closest('.slot');
   if (!slot) return null;
   if (slot.classList.contains('video')) return 'video';
@@ -302,10 +317,13 @@ export default function App() {
   const audio = useSlot();
 
   const [dragTarget, setDragTarget] = useState<SlotKind | null>(null);
+  const dropTargetRef = useRef<SlotKind | null>(null);
+  const platformRef = useRef<string | null>(null);
   const videoRef = useRef(video);
   const audioRef = useRef(audio);
   videoRef.current = video;
   audioRef.current = audio;
+  platformRef.current = health?.platform ?? null;
 
   const [outputPath, setOutputPath] = useState('');
   const outputTouched = useRef(false);
@@ -357,10 +375,14 @@ export default function App() {
 
         if (payload.type === 'leave') {
           setDragTarget(null);
+          dropTargetRef.current = null;
           return;
         }
         if (payload.type === 'enter' || payload.type === 'over') {
-          setDragTarget(slotAtPoint(payload.position));
+          const point = toCssPoint(payload.position, platformRef.current);
+          const hovered = slotAtPoint(point);
+          dropTargetRef.current = hovered;
+          setDragTarget(hovered);
           return;
         }
         if (payload.type !== 'drop') return;
@@ -369,7 +391,20 @@ export default function App() {
         const dropped = payload.paths[0];
         if (!dropped) return;
 
-        const target = slotAtPoint(payload.position) ?? 'video';
+        const point = toCssPoint(payload.position, platformRef.current);
+        const target = slotAtPoint(point) ?? dropTargetRef.current;
+        dropTargetRef.current = null;
+
+        void import('@tauri-apps/api/core')
+          .then(({ invoke }) =>
+            invoke('debug_log', {
+              message: `drop at (${Math.round(point.x)}, ${Math.round(point.y)}) -> ${target ?? 'none'}`,
+            }),
+          )
+          .catch(() => undefined);
+
+        // Dropped outside both columns: leave the selection untouched.
+        if (!target) return;
         const controller = target === 'video' ? videoRef.current : audioRef.current;
         if (!isMediaFile(dropped)) {
           controller.setError('不支持的文件类型，请拖入视频或音频文件。');

@@ -84,11 +84,15 @@ ffmpeg ──► 直接读本地文件，直接写本地文件
 
 拖放事件是**窗口级**的，所以代码要用坐标做命中测试，判断落在左栏还是右栏：
 
-```rust
-// 前端：物理像素 -> CSS 像素 -> elementFromPoint -> 最近的 .slot
-const element = document.elementFromPoint(x / devicePixelRatio, y / devicePixelRatio);
-const slot = element?.closest('.slot');
+```ts
+const element = document.elementFromPoint(x, y);
+const slot = element?.closest('.slot');   // .slot.video / .slot.audio
 ```
+
+坐标单位有个坑：wry 在 macOS/Linux 上返回的是**窗口点**（`NSDraggingInfo.draggingLocation`、GTK 控件坐标），
+在 Windows 上返回的却是**物理像素**（DPI-aware 的 `ScreenToClient`），而 Tauri 的 JS 层一律把它包成
+`PhysicalPosition`。如果无脑除以 `devicePixelRatio`，Retina 屏幕上坐标会被缩放两次，落点永远偏到左栏。
+所以 `toCssPoint()` 按平台区分处理，只在 Windows 上做换算。
 
 ### 运行
 

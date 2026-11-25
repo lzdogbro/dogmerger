@@ -326,14 +326,25 @@ pub fn run() {
 
             // Lets a headless run exercise the native drop path end to end.
             #[cfg(debug_assertions)]
-            if let Ok(dropped) = std::env::var("DOGMERGER_SIMULATE_DROP") {
+            if let Ok(spec) = std::env::var("DOGMERGER_SIMULATE_DROP") {
                 let handle = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_secs(5));
+                    // "x|y|path" so a headless run can aim at a specific column.
+                    let parts: Vec<&str> = spec.split('|').collect();
+                    let (x, y, dropped) = if parts.len() >= 3 {
+                        (
+                            parts[0].parse::<f64>().unwrap_or(300.0),
+                            parts[1].parse::<f64>().unwrap_or(300.0),
+                            parts[2].to_string(),
+                        )
+                    } else {
+                        (300.0, 300.0, spec.clone())
+                    };
                     let payload = serde_json::json!({
                         "type": "drop",
                         "paths": [dropped],
-                        "position": { "x": 300.0, "y": 300.0 },
+                        "position": { "x": x, "y": y },
                     });
                     match handle.emit("tauri://drag-drop", payload) {
                         Ok(()) => eprintln!("[dogmerger] simulated drop emitted"),
