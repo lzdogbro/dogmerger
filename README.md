@@ -117,7 +117,19 @@ npm run desktop:build
 
 `bundle.targets` 设为 `"all"`，由宿主系统决定产物：macOS 出 `.app` + `.dmg`，Windows 出 `.msi` + NSIS `.exe`。
 
-Tauri 官方只支持在目标系统上构建 —— 从 macOS 交叉编译 Windows 属于「最后手段」（只能出 NSIS，且测试不充分），MSI 必须在 Windows 上打。所以 Windows 版通过 GitHub Actions 构建（`.github/workflows/build.yml`）：
+Tauri 官方只支持在目标系统上构建 —— 从 macOS 交叉编译 Windows 属于「最后手段」（只能出 NSIS，且测试不充分），MSI 必须在 Windows 上打。所以 也可以从 Linux 交叉编译 **NSIS 安装包**（`.msi` 仍然只能在 Windows 上打）：
+
+```bash
+cargo install --locked cargo-xwin
+rustup target add x86_64-pc-windows-msvc
+cd desktop && npx tauri build --runner cargo-xwin --target x86_64-pc-windows-msvc --bundles nsis
+```
+
+两个已知坑：
+- Tauri CLI 下载 `nsis_tauri_utils.dll` 和 NSIS 发行版时用的 rustls 在国内网络容易 `TLS close_notify` 失败，可先在宿主机用 `curl` 下好放进 `~/.cache/tauri/`
+- Debian bookworm 的 NSIS 3.08 缺 `Include/Win/RestartManager.nsh`，需要从 Ubuntu 24.04 的 `nsis-common` 包里补上
+
+正因如此，Windows 版仍推荐用 CI 构建（`.github/workflows/build.yml`）：
 
 - push 到 `main`、打 `v*` tag、或手动 `workflow_dispatch` 时触发
 - 矩阵包含 `macos-latest` 与 `windows-latest`
