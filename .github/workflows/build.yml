@@ -105,8 +105,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "Dogmerger ${{ github.ref_name }}" \
-            --notes-file .github/release-notes.md \
-            --verify-tag \
-            dist/*.dmg dist/*.deb dist/*.msi dist/*.exe
+          set -euo pipefail
+          TAG="${{ github.ref_name }}"
+          # 先建空 release 再逐个上传，缺某个包类型也不会整体失败
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "Dogmerger $TAG" \
+              --notes-file .github/release-notes.md \
+              --verify-tag
+          fi
+          find dist -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.deb' -o -name '*.msi' -o -name '*.exe' \) \
+            -print -exec gh release upload "$TAG" {} --clobber \;
+          echo "--- 已上传 ---"
+          gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes"'
