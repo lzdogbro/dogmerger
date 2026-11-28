@@ -5,7 +5,7 @@
 | 平台 | 文件 |
 |---|---|
 | macOS (Apple Silicon) | `Dogmerger_*_aarch64.dmg` |
-| Windows x64 | `Dogmerger_*_x64-setup.exe`（安装包）、`Dogmerger_*_x64_en-US.msi`、`Dogmerger_*_x64-portable.zip`（免安装，含内置 ffmpeg） |
+| Windows x64 | `Dogmerger_*_x64-setup.exe`（安装包）、`Dogmerger_*_x64_en-US.msi` |
 | Linux x86_64 | `Dogmerger_*_amd64.deb` |
 
 ## 运行前提

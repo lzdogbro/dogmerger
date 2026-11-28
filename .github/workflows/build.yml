@@ -72,20 +72,6 @@ jobs:
           projectPath: desktop
           args: ${{ matrix.args }}
 
-      - name: Package portable build
-        if: matrix.platform == 'windows-latest'
-        shell: pwsh
-        run: |
-          $version = (Get-Content desktop/src-tauri/tauri.conf.json | ConvertFrom-Json).version
-          $out = "Dogmerger_${version}_x64-portable.zip"
-          # 便携版必须带上 sidecar，否则单独一个 exe 用不了内置 ffmpeg
-          Compress-Archive -Path `
-            desktop/src-tauri/target/release/dogmerger.exe, `
-            desktop/src-tauri/target/release/ffmpeg.exe, `
-            desktop/src-tauri/target/release/ffprobe.exe `
-            -DestinationPath $out -Force
-          Write-Host "created $out"
-
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
@@ -96,7 +82,6 @@ jobs:
             desktop/src-tauri/target/release/bundle/nsis/*.exe
             desktop/src-tauri/target/release/bundle/deb/*.deb
             desktop/src-tauri/target/release/bundle/dmg/*.dmg
-            Dogmerger_*_portable.zip
           if-no-files-found: warn
 
   release:
@@ -130,7 +115,7 @@ jobs:
               --verify-tag
           fi
           find dist -type f \
-            \( -name '*.dmg' -o -name '*.deb' -o -name '*.msi' -o -name '*.exe' -o -name '*.zip' \) \
+            \( -name '*.dmg' -o -name '*.deb' -o -name '*.msi' -o -name '*.exe' \) \
             -print -exec gh release upload "$TAG" {} --clobber \;
           echo "--- 已上传 ---"
           gh release view "$TAG" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes"'
