@@ -2,6 +2,7 @@ mod ffmpeg;
 mod jobs;
 mod media;
 mod plan;
+mod settings;
 
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -11,17 +12,10 @@ use tauri::{AppHandle, Manager};
 #[cfg(debug_assertions)]
 use tauri::Emitter;
 
+use ffmpeg::BinaryInfo;
 use jobs::{Job, JobStore};
 use media::MediaInfo;
 use plan::MergePlan;
-
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct BinaryInfo {
-    available: bool,
-    path: String,
-    version: Option<String>,
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,14 +40,6 @@ struct Health {
     picker: Picker,
 }
 
-fn binary_info(info: ffmpeg::BinaryInfo) -> BinaryInfo {
-    BinaryInfo {
-        available: info.available,
-        path: info.path,
-        version: info.version,
-    }
-}
-
 /// Echoes a line to stderr when DOGMERGER_DEBUG is set. Used by the frontend to
 /// prove that IPC and the native drag-drop listener actually came up.
 #[tauri::command]
@@ -63,22 +49,22 @@ fn debug_log(message: String) {
     }
 }
 
-#[tauri::command]
-fn health() -> Health {
-    let ffmpeg_info = ffmpeg::inspect("ffmpeg");
-    let ffprobe_info = ffmpeg::inspect("ffprobe");
+fn build_health(app: &AppHandle) -> Health {
+    let config = settings::load(app);
+    let ffmpeg_info = ffmpeg::inspect(config.ffmpeg_path.as_deref(), "ffmpeg");
+    let ffprobe_info = ffmpeg::inspect(config.ffprobe_path.as_deref(), "ffprobe");
     if std::env::var("DOGMERGER_DEBUG").is_ok() {
         eprintln!(
-            "[dogmerger:web] health invoked, ffmpeg={:?} at {}",
-            ffmpeg_info.version, ffmpeg_info.path
+            "[dogmerger:web] health invoked, ffmpeg={:?} source={:?} at {}",
+            ffmpeg_info.version, ffmpeg_info.source, ffmpeg_info.path
         );
     }
     Health {
         ok: ffmpeg_info.available && ffprobe_info.available,
         platform: std::env::consts::OS.to_string(),
         binaries: Binaries {
-            ffmpeg: binary_info(ffmpeg_info),
-            ffprobe: binary_info(ffprobe_info),
+            ffmpeg: ffmpeg_info,
+            ffprobe: ffprobe_info,
         },
         // The desktop build always has a native picker available.
         picker: Picker {
@@ -89,11 +75,44 @@ fn health() -> Health {
 }
 
 #[tauri::command]
-fn probe_media(path: String) -> Result<MediaInfo, String> {
+fn health(app: AppHandle) -> Health {
+    build_health(&app)
+}
+
+/// Saves a user-picked binary (or clears it with `path: null`).
+#[tauri::command]
+fn set_binary_path(
+    app: AppHandle,
+    kind: String,
+    path: Option<String>,
+) -> Result<Health, String> {
+    let picked = path
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+
+    if let Some(value) = &picked {
+        let expected = if kind == "ffprobe" { "ffprobe" } else { "ffmpeg" };
+        ffmpeg::validate(value, expected)?;
+    }
+
+    let mut config = settings::load(&app);
+    match kind.as_str() {
+        "ffmpeg" => config.ffmpeg_path = picked,
+        "ffprobe" => config.ffprobe_path = picked,
+        other => return Err(format!("未知的依赖：{other}")),
+    }
+    settings::save(&app, &config)?;
+    Ok(build_health(&app))
+}
+
+#[tauri::command]
+fn probe_media(app: AppHandle, path: String) -> Result<MediaInfo, String> {
     if std::env::var("DOGMERGER_DEBUG").is_ok() {
         eprintln!("[dogmerger:web] probe invoked: {path}");
     }
-    media::probe(&path)
+    let config = settings::load(&app);
+    let ffprobe = ffmpeg::resolve(config.ffprobe_path.as_deref(), "ffprobe");
+    media::probe(&path, &ffprobe.path)
 }
 
 #[derive(Serialize, Clone)]
@@ -105,12 +124,18 @@ struct PlanResponse {
 }
 
 fn resolve_plan(
+    app: &AppHandle,
     video_path: &str,
     audio_path: &str,
     output_path: Option<&str>,
 ) -> Result<(MergePlan, String), String> {
-    let video = media::probe(video_path)?;
-    let audio = media::probe(audio_path)?;
+    let config = settings::load(app);
+    let ffprobe = ffmpeg::resolve(config.ffprobe_path.as_deref(), "ffprobe");
+    if ffprobe.source.is_none() {
+        return Err("找不到 ffprobe，请在右上角「依赖状态」里指定它的位置。".to_string());
+    }
+    let video = media::probe(video_path, &ffprobe.path)?;
+    let audio = media::probe(audio_path, &ffprobe.path)?;
     let plan = plan::build(video, audio)?;
 
     let suggested = match output_path {
@@ -125,12 +150,13 @@ fn resolve_plan(
 
 #[tauri::command]
 fn build_plan(
+    app: AppHandle,
     video_path: String,
     audio_path: String,
     output_path: Option<String>,
 ) -> Result<PlanResponse, String> {
     let (plan, suggested_output) =
-        resolve_plan(&video_path, &audio_path, output_path.as_deref())?;
+        resolve_plan(&app, &video_path, &audio_path, output_path.as_deref())?;
     Ok(PlanResponse {
         plan,
         suggested_output,
@@ -149,14 +175,19 @@ fn start_job(
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty());
 
-    let (plan, suggested) = resolve_plan(&video_path, &audio_path, explicit.as_deref())?;
+    let (plan, suggested) = resolve_plan(&app, &video_path, &audio_path, explicit.as_deref())?;
+    let config = settings::load(&app);
+    let ffmpeg_bin = ffmpeg::resolve(config.ffmpeg_path.as_deref(), "ffmpeg");
+    if ffmpeg_bin.source.is_none() {
+        return Err("找不到 ffmpeg，请在右上角「依赖状态」里指定它的位置。".to_string());
+    }
     let output = match explicit {
         // An explicitly chosen path is an explicit overwrite.
         Some(_) => PathBuf::from(suggested),
         None => plan::find_free_output(Path::new(&suggested)),
     };
 
-    jobs::start(&app, plan, output)
+    jobs::start(&app, plan, output, ffmpeg_bin.path)
 }
 
 #[tauri::command]
@@ -289,14 +320,16 @@ pub fn run() {
                         return;
                     }
                     let (video, audio, output) = (parts[0], parts[1], parts[2]);
-                    let plan = match resolve_plan(video, audio, Some(output)) {
+                    let plan = match resolve_plan(&handle, video, audio, Some(output)) {
                         Ok((plan, _)) => plan,
                         Err(error) => {
                             eprintln!("[dogmerger] simulate-merge: plan failed: {error}");
                             return;
                         }
                     };
-                    let job = match jobs::start(&handle, plan, PathBuf::from(output)) {
+                    let ffmpeg_bin = ffmpeg::resolve(None, "ffmpeg").path;
+                    let job = match jobs::start(&handle, plan, PathBuf::from(output), ffmpeg_bin)
+                    {
                         Ok(job) => job,
                         Err(error) => {
                             eprintln!("[dogmerger] simulate-merge: start failed: {error}");
@@ -370,6 +403,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             debug_log,
             health,
+            set_binary_path,
             probe_media,
             build_plan,
             start_job,

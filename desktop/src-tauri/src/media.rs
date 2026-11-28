@@ -2,7 +2,6 @@ use serde::Serialize;
 use serde_json::Value;
 use std::process::Command;
 
-use crate::ffmpeg;
 
 #[derive(Serialize, Clone, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -72,13 +71,13 @@ fn parse_frame_rate(value: Option<&Value>) -> f64 {
     numerator / denominator
 }
 
-pub fn probe(path: &str) -> Result<MediaInfo, String> {
+pub fn probe(path: &str, ffprobe_path: &str) -> Result<MediaInfo, String> {
     let metadata = std::fs::metadata(path).map_err(|_| format!("文件不存在或无法读取：{path}"))?;
     if !metadata.is_file() {
         return Err(format!("不是文件：{path}"));
     }
 
-    let output = Command::new(ffmpeg::resolve("ffprobe"))
+    let output = Command::new(ffprobe_path)
         .args([
             "-v",
             "error",
@@ -203,7 +202,7 @@ mod tests {
 
     #[test]
     fn missing_file_is_reported_clearly() {
-        let error = probe("/definitely/not/here.mp4").unwrap_err();
+        let error = probe("/definitely/not/here.mp4", "ffprobe").unwrap_err();
         assert!(error.contains("文件不存在"));
     }
 }

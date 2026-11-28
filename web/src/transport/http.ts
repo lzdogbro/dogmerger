@@ -59,4 +59,8 @@ export const httpApi: DogmergerApi = {
 
   pick: (input: { kind: PickerKind; prompt: string; defaultName?: string }) =>
     post<{ path: string | null }>('/api/pick', input),
+
+  setBinaryPath: () => {
+    throw new ApiError('Web 版本不支持指定依赖路径，请设置 FFMPEG_PATH / FFPROBE_PATH。', 501);
+  },
 };

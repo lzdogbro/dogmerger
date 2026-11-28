@@ -145,6 +145,24 @@ docker run --rm -v "$PWD:/src" -w /src --cpus 2 -e CARGO_BUILD_JOBS=2 \
 
 Windows 上运行时需要机器已安装 ffmpeg 并在 `PATH` 中，或设置 `FFMPEG_PATH` / `FFPROBE_PATH` 环境变量 —— 目前没有把 ffmpeg 作为 sidecar 打进安装包。
 
+### 依赖检测
+
+右上角的状态标签显示 ffmpeg 版本；缺依赖时变成「缺少 ffmpeg、ffprobe」，点击可展开「依赖状态」面板。
+
+检测顺序（前一个命中即停）：
+
+1. 应用内设置（面板里「选择位置…」选的路径，存于平台配置目录的 `settings.json`）
+2. 环境变量 `FFMPEG_PATH` / `FFPROBE_PATH`
+3. 内置 sidecar（与主程序同目录，为下一步预留）
+4. `PATH` 与 `/opt/homebrew/bin`、`/usr/local/bin` 等常见目录
+
+面板里：
+
+- 分别显示 ffmpeg 与 ffprobe 的状态、版本、路径、来源（自定义 / 环境变量 / 内置 / PATH）
+- 缺哪个就列哪个，附**按平台给出的安装命令**和一键复制
+- 「重新检测」无需重启应用
+- 桌面版可「选择位置…」直接指定二进制；设置过但路径失效时会提示并自动回退
+
 ### 仅桌面版有的行为
 
 - 关闭窗口即退出，并杀掉仍在运行的 ffmpeg 子进程

@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { open as openDialog, save as saveDialog } from '@tauri-apps/plugin-dialog';
 import type {
+  BinaryKind,
   DogmergerApi,
   Health,
   Job,
@@ -45,6 +46,8 @@ export const tauriApi: DogmergerApi = {
     invoke<void>('reveal_path', { path }).then(() => ({ ok: true })),
 
   open: (path: string) => invoke<void>('open_path', { path }).then(() => ({ ok: true })),
+
+  setBinaryPath: (kind, path) => invoke<Health>('set_binary_path', { kind, path }),
 
   pick: async (input: { kind: PickerKind; prompt: string; defaultName?: string }) => {
     if (input.kind === 'save') {

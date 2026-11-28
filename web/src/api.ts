@@ -30,6 +30,7 @@ export const api: DogmergerApi = {
   reveal: async (path) => (await backend()).reveal(path),
   open: async (path) => (await backend()).open(path),
   pick: async (input) => (await backend()).pick(input),
+  setBinaryPath: async (kind, path) => (await backend()).setBinaryPath(kind, path),
 };
 
 export { isTauri };

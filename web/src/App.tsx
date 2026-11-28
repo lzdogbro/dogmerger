@@ -1,5 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { api, ApiError, isTauri, type Health, type Job, type MediaInfo, type PlanResponse } from './api';
+import {
+  api,
+  ApiError,
+  isTauri,
+  type BinaryKind,
+  type BinaryStatus,
+  type Health,
+  type Job,
+  type MediaInfo,
+  type PlanResponse,
+} from './api';
 
 type SlotKind = 'video' | 'audio';
 
@@ -78,6 +88,134 @@ function slotAtPoint(point: { x: number; y: number }): SlotKind | null {
   if (slot.classList.contains('video')) return 'video';
   if (slot.classList.contains('audio')) return 'audio';
   return null;
+}
+
+type PlatformKind = 'macos' | 'windows' | 'linux' | 'other';
+
+function platformKind(platform: string | null | undefined): PlatformKind {
+  if (!platform) return 'other';
+  if (platform === 'macos' || platform === 'darwin') return 'macos';
+  if (platform === 'windows' || platform === 'win32') return 'windows';
+  if (platform === 'linux') return 'linux';
+  return 'other';
+}
+
+function installCommand(platform: PlatformKind): string {
+  switch (platform) {
+    case 'macos':
+      return 'brew install ffmpeg';
+    case 'windows':
+      return 'winget install --id Gyan.FFmpeg -e';
+    case 'linux':
+      return 'sudo apt install ffmpeg';
+    default:
+      return '请安装 ffmpeg 并加入 PATH';
+  }
+}
+
+function missingBinaries(health: Health): string[] {
+  const missing: string[] = [];
+  if (!health.binaries.ffmpeg.available) missing.push('ffmpeg');
+  if (!health.binaries.ffprobe.available) missing.push('ffprobe');
+  return missing;
+}
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch {
+    // fall through to the legacy path
+  }
+  try {
+    const textarea = document.createElement('textarea');
+    textarea.value = text;
+    textarea.style.position = 'fixed';
+    textarea.style.opacity = '0';
+    document.body.appendChild(textarea);
+    textarea.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(textarea);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  custom: '自定义',
+  env: '环境变量',
+  bundled: '内置',
+  path: 'PATH',
+};
+
+interface DependencyRowProps {
+  name: BinaryKind;
+  info: BinaryStatus;
+  platform: PlatformKind;
+  desktop: boolean;
+  busy: boolean;
+  copied: boolean;
+  onPick: () => void;
+  onClear: () => void;
+  onCopy: () => void;
+}
+
+function DependencyRow(props: DependencyRowProps) {
+  const { info } = props;
+  const staleCustom = info.customPath && info.source !== 'custom' ? info.customPath : null;
+
+  return (
+    <div className="dep-row">
+      <div className="dep-line">
+        <span className={`dep-name ${info.available ? 'ok' : 'bad'}`}>{props.name}</span>
+        <span className="dep-version">{info.available ? `v${info.version}` : '未找到'}</span>
+        {info.source && (
+          <span className="dep-source">来自 {SOURCE_LABEL[info.source] ?? info.source}</span>
+        )}
+      </div>
+
+      {info.available && <p className="dep-path" title={info.path}>{info.path}</p>}
+
+      {staleCustom && (
+        <p className="slot-error">已保存的路径不可用：{staleCustom}，已回退到其它来源。</p>
+      )}
+
+      {!info.available && (
+        <div className="dep-fix">
+          <code>{installCommand(props.platform)}</code>
+          <button type="button" className="ghost small" onClick={props.onCopy}>
+            {props.copied ? '已复制' : '复制命令'}
+          </button>
+        </div>
+      )}
+
+      {props.desktop && (
+        <div className="dep-actions">
+          <button
+            type="button"
+            className="ghost small"
+            disabled={props.busy}
+            onClick={props.onPick}
+          >
+            {props.busy ? '处理中…' : info.available ? '更换位置…' : '选择位置…'}
+          </button>
+          {info.customPath && (
+            <button
+              type="button"
+              className="ghost small"
+              disabled={props.busy}
+              onClick={props.onClear}
+            >
+              清除自定义路径
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function describe(info: MediaInfo, kind: SlotKind): string[] {
@@ -312,6 +450,11 @@ function Slot(props: SlotProps) {
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
+  const [healthExpanded, setHealthExpanded] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [depBusy, setDepBusy] = useState<BinaryKind | null>(null);
+  const [depError, setDepError] = useState<string | null>(null);
+  const [copied, setCopied] = useState<BinaryKind | null>(null);
 
   const video = useSlot();
   const audio = useSlot();
@@ -447,6 +590,59 @@ export default function App() {
     [],
   );
 
+  const refreshHealth = useCallback(async () => {
+    setChecking(true);
+    try {
+      setHealth(await api.health());
+      setHealthError(null);
+    } catch (error) {
+      setHealthError(errorMessage(error));
+    } finally {
+      setChecking(false);
+    }
+  }, []);
+
+  const chooseBinary = async (kind: BinaryKind) => {
+    setDepError(null);
+    setDepBusy(kind);
+    try {
+      const picked = await api.pick({ kind: 'open', prompt: `选择 ${kind} 可执行文件` });
+      if (!picked.path) return;
+      setHealth(await api.setBinaryPath(kind, picked.path));
+    } catch (error) {
+      setDepError(errorMessage(error));
+    } finally {
+      setDepBusy(null);
+    }
+  };
+
+  const clearBinary = async (kind: BinaryKind) => {
+    setDepError(null);
+    setDepBusy(kind);
+    try {
+      setHealth(await api.setBinaryPath(kind, null));
+    } catch (error) {
+      setDepError(errorMessage(error));
+    } finally {
+      setDepBusy(null);
+    }
+  };
+
+  const copyInstall = async (kind: BinaryKind) => {
+    const ok = await copyText(installCommand(platformKind(health?.platform)));
+    if (!ok) {
+      setDepError('复制失败，请手动选中命令复制。');
+      return;
+    }
+    setCopied(kind);
+    window.setTimeout(() => setCopied(null), 1500);
+  };
+
+  // 缺依赖时自动展开面板，装好之后不强行收起
+  useEffect(() => {
+    if (health && !health.ok) setHealthExpanded(true);
+  }, [health]);
+
   /**
    * A drop cannot be used directly: browsers never expose the dropped file's
    * path, and this tool must not copy a multi-gigabyte file just to learn it.
@@ -508,7 +704,7 @@ export default function App() {
       active = false;
       clearTimeout(handle);
     };
-  }, [video.path, audio.path]);
+  }, [video.path, audio.path, health]);
 
   useEffect(() => {
     if (!jobId) return;
@@ -644,23 +840,68 @@ export default function App() {
           <p className="sub">把视频和音频合成一个文件 · 流复制，内存占用恒定</p>
         </div>
         <div className="status">
-          {health ? (
-            health.ok ? (
-              <span className="chip ok">ffmpeg {health.binaries.ffmpeg.version}</span>
-            ) : (
-              <span className="chip bad">未找到 ffmpeg</span>
-            )
-          ) : (
-            <span className="chip">{healthError ? '服务未连接' : '检测中…'}</span>
-          )}
+          <button
+            type="button"
+            className={`chip as-button ${health ? (health.ok ? 'ok' : 'bad') : ''}`}
+            aria-expanded={healthExpanded}
+            title="查看依赖状态"
+            onClick={() => setHealthExpanded((value) => !value)}
+          >
+            {health
+              ? health.ok
+                ? `ffmpeg ${health.binaries.ffmpeg.version}`
+                : `缺少 ${missingBinaries(health).join('、')}`
+              : healthError
+                ? '服务未连接'
+                : '检测中…'}
+          </button>
         </div>
       </header>
 
-      {health && !health.ok && (
-        <div className="banner bad">
-          找不到 ffmpeg / ffprobe。请先安装（<code>brew install ffmpeg</code>），或设置环境变量{' '}
-          <code>FFMPEG_PATH</code> / <code>FFPROBE_PATH</code>。
-        </div>
+      {health && healthExpanded && (
+        <section className="card dep">
+          <div className="dep-head">
+            <h2>依赖状态</h2>
+            <button
+              type="button"
+              className="ghost small"
+              disabled={checking}
+              onClick={() => void refreshHealth()}
+            >
+              {checking ? '检测中…' : '重新检测'}
+            </button>
+          </div>
+
+          <DependencyRow
+            name="ffmpeg"
+            info={health.binaries.ffmpeg}
+            platform={platformKind(health.platform)}
+            desktop={isTauri()}
+            busy={depBusy === 'ffmpeg'}
+            copied={copied === 'ffmpeg'}
+            onPick={() => void chooseBinary('ffmpeg')}
+            onClear={() => void clearBinary('ffmpeg')}
+            onCopy={() => void copyInstall('ffmpeg')}
+          />
+          <DependencyRow
+            name="ffprobe"
+            info={health.binaries.ffprobe}
+            platform={platformKind(health.platform)}
+            desktop={isTauri()}
+            busy={depBusy === 'ffprobe'}
+            copied={copied === 'ffprobe'}
+            onPick={() => void chooseBinary('ffprobe')}
+            onClear={() => void clearBinary('ffprobe')}
+            onCopy={() => void copyInstall('ffprobe')}
+          />
+
+          {depError && <p className="slot-error">{depError}</p>}
+
+          <p className="note">
+            检测顺序：应用内设置 → 环境变量 <code>FFMPEG_PATH</code> / <code>FFPROBE_PATH</code> → 内置
+            sidecar → PATH 与常见安装目录。
+          </p>
+        </section>
       )}
 
       {healthError && (

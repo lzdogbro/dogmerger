@@ -8,7 +8,6 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Manager};
 
-use crate::ffmpeg;
 use crate::plan::MergePlan;
 
 #[derive(Serialize, Clone, Default)]
@@ -141,7 +140,12 @@ fn build_args(plan: &MergePlan, output: &Path) -> Vec<String> {
     args
 }
 
-pub fn start(app: &AppHandle, plan: MergePlan, output: PathBuf) -> Result<Job, String> {
+pub fn start(
+    app: &AppHandle,
+    plan: MergePlan,
+    output: PathBuf,
+    ffmpeg_path: String,
+) -> Result<Job, String> {
     for input in [&plan.video.path, &plan.audio.path] {
         if Path::new(input) == output.as_path() {
             return Err("输出文件不能和输入文件相同，请换一个输出路径。".to_string());
@@ -165,14 +169,14 @@ pub fn start(app: &AppHandle, plan: MergePlan, output: PathBuf) -> Result<Job, S
     }
 
     let args = build_args(&plan, &output);
-    let mut child = Command::new(ffmpeg::resolve("ffmpeg"))
+    let mut child = Command::new(&ffmpeg_path)
         .args(&args)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|_| {
-            "找不到 ffmpeg。请安装（brew install ffmpeg）或设置 FFMPEG_PATH。".to_string()
+            "找不到 ffmpeg，请在右上角「依赖状态」里指定它的位置。".to_string()
         })?;
 
     let stdout = child.stdout.take().ok_or("无法读取 ffmpeg 的进度输出")?;
@@ -410,6 +414,7 @@ pub fn replace_output(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ffmpeg;
     use crate::media::{AudioStreamInfo, VideoStreamInfo};
     use std::process::Command;
 
@@ -494,7 +499,7 @@ mod tests {
     /// ffmpeg itself. Skipped when ffmpeg is not installed.
     #[test]
     fn end_to_end_merge_roundtrip() {
-        if ffmpeg::inspect("ffmpeg").version.is_none() {
+        if ffmpeg::inspect(None, "ffmpeg").version.is_none() {
             eprintln!("ffmpeg 不可用，跳过端到端测试");
             return;
         }
@@ -505,7 +510,7 @@ mod tests {
         let audio_path = dir.join("track.mp3");
         let output_path = dir.join("out.mp4");
 
-        let video_ok = Command::new(ffmpeg::resolve("ffmpeg"))
+        let video_ok = Command::new(ffmpeg::resolve(None, "ffmpeg").path)
             .args([
                 "-hide_banner", "-loglevel", "error", "-y",
                 "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=30",
@@ -518,7 +523,7 @@ mod tests {
             .unwrap_or(false);
         assert!(video_ok, "生成测试视频失败");
 
-        let audio_ok = Command::new(ffmpeg::resolve("ffmpeg"))
+        let audio_ok = Command::new(ffmpeg::resolve(None, "ffmpeg").path)
             .args([
                 "-hide_banner", "-loglevel", "error", "-y",
                 "-f", "lavfi", "-i", "sine=frequency=440:duration=3",
@@ -530,20 +535,21 @@ mod tests {
             .unwrap_or(false);
         assert!(audio_ok, "生成测试音频失败");
 
-        let video = crate::media::probe(video_path.to_str().unwrap()).unwrap();
-        let audio = crate::media::probe(audio_path.to_str().unwrap()).unwrap();
+        let ffprobe = ffmpeg::resolve(None, "ffprobe").path;
+        let video = crate::media::probe(video_path.to_str().unwrap(), &ffprobe).unwrap();
+        let audio = crate::media::probe(audio_path.to_str().unwrap(), &ffprobe).unwrap();
         let plan = crate::plan::build(video, audio).unwrap();
         assert_eq!(plan.audio_tail_seconds, 1.0);
 
         let args = build_args(&plan, &output_path);
-        let merged = Command::new(ffmpeg::resolve("ffmpeg"))
+        let merged = Command::new(ffmpeg::resolve(None, "ffmpeg").path)
             .args(&args)
             .status()
             .map(|status| status.success())
             .unwrap_or(false);
         assert!(merged, "ffmpeg 合并失败");
 
-        let result = crate::media::probe(output_path.to_str().unwrap()).unwrap();
+        let result = crate::media::probe(output_path.to_str().unwrap(), &ffprobe).unwrap();
         assert!((result.duration - 3.0).abs() < 0.2, "容器时长 {}", result.duration);
         assert!((result.video.as_ref().unwrap().fps - 30.0).abs() < 0.5);
 

@@ -63,15 +63,29 @@ export interface Job {
   elapsedSeconds: number | null;
 }
 
+export type BinarySource = 'custom' | 'env' | 'bundled' | 'path';
+
+export interface BinaryStatus {
+  available: boolean;
+  path: string;
+  version: string | null;
+  /** Where the resolved binary came from. Web build does not report this. */
+  source?: BinarySource;
+  /** Set when the user stored a path that does not point at a usable binary. */
+  customPath?: string | null;
+}
+
 export interface Health {
   ok: boolean;
   platform: string;
   binaries: {
-    ffmpeg: { available: boolean; path: string; version: string | null };
-    ffprobe: { available: boolean; path: string; version: string | null };
+    ffmpeg: BinaryStatus;
+    ffprobe: BinaryStatus;
   };
   picker: { supported: boolean; reason: string | null };
 }
+
+export type BinaryKind = 'ffmpeg' | 'ffprobe';
 
 export class ApiError extends Error {
   constructor(message: string, readonly status: number) {
@@ -104,4 +118,6 @@ export interface DogmergerApi {
     prompt: string;
     defaultName?: string;
   }): Promise<{ path: string | null }>;
+  /** Remembers a user-picked binary; pass null to clear it. */
+  setBinaryPath(kind: BinaryKind, path: string | null): Promise<Health>;
 }
