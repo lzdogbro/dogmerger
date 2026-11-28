@@ -499,8 +499,19 @@ mod tests {
     /// ffmpeg itself. Skipped when ffmpeg is not installed.
     #[test]
     fn end_to_end_merge_roundtrip() {
-        if ffmpeg::inspect(None, "ffmpeg").version.is_none() {
+        let generator = ffmpeg::resolve(None, "ffmpeg");
+        if generator.source.is_none() {
             eprintln!("ffmpeg 不可用，跳过端到端测试");
+            return;
+        }
+        // 内置 ffmpeg 是最小化构建（无视频编码器），生成素材需要 libx264
+        if !Command::new(&generator.path)
+            .args(["-hide_banner", "-encoders"])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).contains("libx264"))
+            .unwrap_or(false)
+        {
+            eprintln!("当前 ffmpeg 没有 libx264，跳过端到端测试");
             return;
         }
 

@@ -195,6 +195,21 @@ pub fn validate(path: &str, name: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
+
+    /// 一个存在、可执行、但显然不是 ffmpeg 的文件，用于校验拒绝逻辑。
+    #[cfg(unix)]
+    const OTHER_BINARY: &str = "/bin/ls";
+    #[cfg(windows)]
+    const OTHER_BINARY: &str = "C:\\Windows\\System32\\cmd.exe";
+
+    fn libx264_available(path: &str) -> bool {
+        Command::new(path)
+            .args(["-hide_banner", "-encoders"])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).contains("libx264"))
+            .unwrap_or(false)
+    }
 
     #[test]
     fn missing_binary_reports_no_source() {
@@ -206,9 +221,9 @@ mod tests {
 
     #[test]
     fn custom_path_wins_over_path_lookup() {
-        let resolved = resolve(Some("/bin/ls"), "ffmpeg");
+        let resolved = resolve(Some(OTHER_BINARY), "ffmpeg");
         assert_eq!(resolved.source, Some(BinSource::Custom));
-        assert_eq!(resolved.path, "/bin/ls");
+        assert_eq!(resolved.path, OTHER_BINARY);
     }
 
     #[test]
@@ -226,7 +241,7 @@ mod tests {
 
     #[test]
     fn validate_rejects_the_wrong_binary() {
-        let error = validate("/bin/ls", "ffmpeg").unwrap_err();
+        let error = validate(OTHER_BINARY, "ffmpeg").unwrap_err();
         assert!(error.contains("不是 ffmpeg"), "unexpected: {error}");
     }
 
@@ -238,9 +253,26 @@ mod tests {
 
     #[test]
     fn validate_accepts_a_real_ffmpeg() {
-        if let Some(source) = resolve(None, "ffmpeg").source {
-            let path = resolve(None, "ffmpeg").path;
-            assert!(validate(&path, "ffmpeg").is_ok(), "source={source:?}");
+        let resolved = resolve(None, "ffmpeg");
+        if resolved.source.is_some() {
+            assert!(
+                validate(&resolved.path, "ffmpeg").is_ok(),
+                "path={}",
+                resolved.path
+            );
         }
+    }
+
+    /// 内置的是最小化构建，没有视频编码器；有 libx264 时才跑编码相关检测。
+    #[test]
+    fn minimal_build_has_no_video_encoder() {
+        let resolved = resolve(None, "ffmpeg");
+        if resolved.source != Some(BinSource::Bundled) {
+            return;
+        }
+        assert!(
+            !libx264_available(&resolved.path),
+            "内置 ffmpeg 不应包含 libx264（GPL 组件）"
+        );
     }
 }
