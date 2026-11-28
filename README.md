@@ -113,6 +113,19 @@ npm run desktop:build
 
 打包版把前端资源内嵌进可执行文件，不需要 Vite，也不需要 Node。
 
+### 内置 ffmpeg 的构建
+
+`desktop/src-tauri/binaries/` 下按 target triple 命名的二进制由脚本生成：
+
+```bash
+scripts/build-ffmpeg.sh                 # 本机平台
+scripts/build-ffmpeg.sh --windows       # 在 Linux 上交叉编译 Windows x64（需 mingw-w64）
+```
+
+脚本从 ffmpeg.org 取指定版本源码，以 `--disable-everything` 起底、只开启需要的
+demuxer/muxer/解码器/AAC 编码器，产出约 3 MB 的静态可执行文件。授权信息见
+`desktop/src-tauri/THIRD-PARTY.md`。
+
 ### 平台与 Windows 构建
 
 `bundle.targets` 设为 `"all"`，由宿主系统决定产物：macOS 出 `.app` + `.dmg`，Windows 出 `.msi` + NSIS `.exe`。
@@ -149,12 +162,18 @@ Windows 上运行时需要机器已安装 ffmpeg 并在 `PATH` 中，或设置 `
 
 右上角的状态标签显示 ffmpeg 版本；缺依赖时变成「缺少 ffmpeg、ffprobe」，点击可展开「依赖状态」面板。
 
+**应用内置 ffmpeg**，开箱即用，无需用户自行安装。
+
 检测顺序（前一个命中即停）：
 
 1. 应用内设置（面板里「选择位置…」选的路径，存于平台配置目录的 `settings.json`）
 2. 环境变量 `FFMPEG_PATH` / `FFPROBE_PATH`
-3. 内置 sidecar（与主程序同目录，为下一步预留）
+3. 内置 sidecar（与主程序同目录的 `ffmpeg` / `ffprobe`）
 4. `PATH` 与 `/opt/homebrew/bin`、`/usr/local/bin` 等常见目录
+
+内置的是**最小化构建**（7.1.1，LGPL 2.1+）：只保留 `-c copy` 合流、AAC 转码和常见容器/音频解码，
+每个平台约 5.5 MB（ffmpeg + ffprobe），安装包因此增大约 4.7 MB。不含 x264/x265 等 GPL 组件 —— 
+本应用从不编码视频，用不到。
 
 面板里：
 

@@ -10,13 +10,10 @@
 
 ## 运行前提
 
-需要系统已安装 **ffmpeg** 与 **ffprobe**：
+**无需安装 ffmpeg** —— 安装包已内置最小化的 FFmpeg 7.1.1（LGPL 2.1+）。
 
-- macOS：`brew install ffmpeg`
-- Windows：`winget install Gyan.FFmpeg`，或把 ffmpeg 所在目录加入 `PATH`
-- Linux：`sudo apt install ffmpeg`
-
-也可以用环境变量 `FFMPEG_PATH` / `FFPROBE_PATH` 指定可执行文件。
+如果系统里已有更完整的 ffmpeg，可在应用右上角「依赖状态」里指定使用它，
+或设置环境变量 `FFMPEG_PATH` / `FFPROBE_PATH`。
 
 ## 说明
 

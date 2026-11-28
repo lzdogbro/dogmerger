@@ -1,6 +1,6 @@
 [package]
 name = "dogmerger"
-version = "0.1.0"
+version = "0.2.0"
 description = "Merge a video and an audio file with ffmpeg stream copy"
 edition = "2021"
 rust-version = "1.77"
